@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="img-src 'none', script-src 'sha256-lLvWePLrgCn07EcwYB0JPy65n3OloEYiWK34Ql9Zdmc='">
+<title>CSP test</title>
+</head>
+<body>
+  <span id="title">If you can see this, the CSP violation event listener was prevented from executing.</span>
+  <script nonce="example">
+    document.getElementById('title').innerText = 'CSP directives violated:';
+    let directives = new Set;
+    document.addEventListener('securitypolicyviolation', function(e) {
+      directives.add(e.violatedDirective);
+      document.getElementById('violations').innerHTML = [...directives].map(v => '<li>' + v).join('');
+    });
+  </script>
+  <ul id="violations"></ul>
+
+  <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==" alt="a red dot">
+  <script>console.log('a console log from an inline script')</script>
