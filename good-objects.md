@@ -12,3 +12,5 @@ A list of objects which are good in a particular way.
 - Gryoscope
 - [Three polarizers](https://youtu.be/MhhHPOxTUy8?t=122)
 - [Two polarizers and sugar water](https://www.youtube.com/watch?v=975r9a7FMqc)
+- Superconductor
+
