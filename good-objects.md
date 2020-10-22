@@ -13,4 +13,4 @@ A list of objects which are good in a particular way.
 - [Three polarizers](https://youtu.be/MhhHPOxTUy8?t=122)
 - [Two polarizers and sugar water](https://www.youtube.com/watch?v=975r9a7FMqc)
 - Superconductor
-
+- [Magnet viewing paper](https://en.wikipedia.org/wiki/Magnetic_field_viewing_film)
