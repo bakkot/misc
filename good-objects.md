@@ -15,3 +15,4 @@ A list of objects which are good in a particular way.
 - Superconductor
 - [Magnet viewing paper](https://en.wikipedia.org/wiki/Magnetic_field_viewing_film)
 - [Retroreflector](https://en.wikipedia.org/wiki/Retroreflector)
+- [Icelandic feldspar](https://www.youtube.com/watch?v=7XRtKt2Qes0)
