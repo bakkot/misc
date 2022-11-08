@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>eval in a box</title>
+</head>
+<body>
+  <textarea id='txt' rows=10 cols=30></textarea><br>
+  <button onclick='go()'>eval</button> results below<br>
+  <textarea id='out' rows=10 cols=30></textarea><br>
+  <script>
+    'use strict';
+    let rawlog = console.log;
+    console = {
+      __proto__: console,
+      log(...args) {
+        rawlog(...args);
+        out.value += args[0] + '\n';
+      }
+    };
+    function go() {
+      out.value = '';
+      try {
+        let res = (0, eval)(txt.value);
+        out.value += res;
+      } catch (e) {
+        out.value += 'Error: ' + e;
+      }
+    }
+  </script>
