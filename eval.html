@@ -5,9 +5,9 @@
   <title>eval in a box</title>
 </head>
 <body>
-  <textarea id='txt' rows=10 cols=30></textarea><br>
+  <textarea id='txt' rows=10 cols=30 spellcheck=false autocapitalize=off autocomplete=off autocorrect=off></textarea><br>
   <button onclick='go()'>eval</button> results below<br>
-  <textarea id='out' rows=10 cols=30></textarea><br>
+  <textarea id='out' rows=10 cols=30 spellcheck=false autocapitalize=off autocomplete=off autocorrect=off></textarea><br>
   <script>
     'use strict';
     let rawlog = console.log;
