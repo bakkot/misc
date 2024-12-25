@@ -201,7 +201,7 @@
         timeTicks.forEach((tick) => {
           g.innerHTML += `
                     <path d="M ${tick.x},0 V 5" stroke="black" />
-                    <text x="${tick.x}" y="20" text-anchor="middle" font-size="12">${tick.label}</text>
+                    <text x="${tick.x}" y="20" text-anchor="middle" font-size="20">${tick.label}</text>
                 `;
         });
 
@@ -209,7 +209,7 @@
         valueTicks.forEach((tick) => {
           g.innerHTML += `
                     <path d="M -5,${-tick.y} H 0" stroke="black" />
-                    <text x="-10" y="${-tick.y + 5}" text-anchor="end" font-size="12">${tick.label}</text>
+                    <text x="-10" y="${-tick.y + 5}" text-anchor="end" font-size="20">${tick.label}</text>
                     <path d="M 0,${-tick.y} H 900" stroke="#eee" />
                 `;
         });
@@ -225,8 +225,8 @@
 
         if (currentY !== null) {
           g.innerHTML += `
-                    <path d="M ${currentX},-400 V 0" stroke="red" stroke-dasharray="4,4" />
-                    <circle cx="${currentX}" cy="${-currentY}" r="4" fill="red" />
+                    <path d="M ${currentX},-400 V 0" stroke="red" stroke-dasharray="4,4" stroke-width="3" />
+                    <circle cx="${currentX}" cy="${-currentY}" r="6" fill="red" />
                 `;
         }
       }
