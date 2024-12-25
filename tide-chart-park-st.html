@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html>
+<!-- NOTE: claude wrote this except for some tweaks -->
+  <head>
+    <title>NOAA Tide Chart - Park Street Bridge</title>
+    <style>
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .chart-container {
+        width: 100%;
+        height: 500px;
+        background: white;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        margin-top: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>NOAA Tide Chart - Park Street Bridge</h1>
+    <div class="chart-container">
+      <svg
+        id="tideChart"
+        width="100%"
+        height="100%"
+        viewBox="0 0 1000 500"
+        preserveAspectRatio="xMidYMid meet"
+      >
+        <g transform="translate(50, 450)">
+          <!-- Chart will be drawn here -->
+        </g>
+      </svg>
+    </div>
+
+    <script>
+      async function fetchTideData() {
+        const year = new Date().getUTCFullYear();
+        const month = new Date().getUTCMonth() + 1;
+        const day = new Date().getUTCDate();
+        const start = `${year}${String(month).padStart(2, "0")}${String(day - 1).padStart(2, "0")}`;
+        const end = `${year}${String(month).padStart(2, "0")}${String(day + 1).padStart(2, "0")}`;
+        const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?begin_date=${start}&end_date=${end}&station=9414746&product=predictions&datum=MTL&time_zone=gmt&units=english&format=xml`;
+        const response = await fetch(url);
+        const text = await response.text();
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(text, "text/xml");
+
+        // Convert UTC times to local
+        return Array.from(xmlDoc.getElementsByTagName("pr")).map((pr) => {
+          const toRFC3339 = (str) => `${str.replace(" ", "T")}:00Z`;
+          const utcTime = new Date(toRFC3339(pr.getAttribute("t")));
+          return {
+            time: utcTime,
+            value: parseFloat(pr.getAttribute("v")),
+          };
+        });
+      }
+
+      function filterDataAroundTime(data, centerTime) {
+        const twelveHours = 12 * 60 * 60 * 1000; // 12 hours in milliseconds
+        const windowStart = new Date(centerTime.getTime() - twelveHours);
+        const windowEnd = new Date(centerTime.getTime() + twelveHours);
+
+        return data.filter((d) => d.time >= windowStart && d.time <= windowEnd);
+      }
+
+      function createPath(data, centerTime) {
+        const width = 900;
+        const height = 400;
+
+        if (data.length < 2) return null;
+
+        const twelveHours = 12 * 60 * 60 * 1000;
+        const timeExtent = [
+          new Date(centerTime.getTime() - twelveHours),
+          new Date(centerTime.getTime() + twelveHours),
+        ];
+
+        // Calculate value extent with padding
+        let baseValueExtent = [
+          Math.min(...data.map((d) => d.value)),
+          Math.max(...data.map((d) => d.value)),
+        ];
+        // actually just hardcode +/- 3.5
+        baseValueExtent = [-3.5, +3.5];
+
+        const valueRange = baseValueExtent[1] - baseValueExtent[0];
+        const padding = valueRange * 0.1; // 10% padding
+        const valueExtent = [
+          baseValueExtent[0] - padding,
+          baseValueExtent[1] + padding,
+        ];
+
+        const xScale = (t) =>
+          ((t - timeExtent[0]) / (timeExtent[1] - timeExtent[0])) * width;
+        const yScale = (v) =>
+          height * ((v - valueExtent[0]) / (valueExtent[1] - valueExtent[0]));
+
+        // Create path with y-values properly mapped for SVG coordinates
+        let path = `M ${xScale(data[0].time)} ${-yScale(data[0].value)}`;
+        for (let i = 1; i < data.length; i++) {
+          // Use cubic interpolation
+          const x1 = xScale(data[i - 1].time);
+          const y1 = -yScale(data[i - 1].value);
+          const x2 = xScale(data[i].time);
+          const y2 = -yScale(data[i].value);
+          const cx1 = (x1 + x2) / 2;
+          const cy1 = y1;
+          const cx2 = (x1 + x2) / 2;
+          const cy2 = y2;
+          path += ` C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`;
+        }
+
+        return {
+          path,
+          xScale,
+          yScale,
+          valueExtent,
+          timeExtent,
+        };
+      }
+
+      function createAxisTicks(timeExtent, valueExtent, xScale, yScale) {
+        const timeTickCount = 8;
+        const valueTickCount = 6;
+
+        const timeTicks = [];
+        const valueTicks = [];
+
+        // Create time ticks in local time
+        for (let i = 0; i <= timeTickCount; i++) {
+          const time = new Date(
+            timeExtent[0].getTime() +
+              (timeExtent[1] - timeExtent[0]) * (i / timeTickCount),
+          );
+          timeTicks.push({
+            value: time,
+            x: xScale(time),
+            label: time.toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+          });
+        }
+
+        // Create value ticks
+        for (let i = 0; i <= valueTickCount; i++) {
+          const value =
+            valueExtent[0] +
+            (valueExtent[1] - valueExtent[0]) * (i / valueTickCount);
+          valueTicks.push({
+            value: value,
+            y: yScale(value),
+            label: value.toFixed(1),
+          });
+        }
+
+        return { timeTicks, valueTicks };
+      }
+
+      function drawChart(data, centerTime) {
+        const svg = document.getElementById("tideChart");
+        const g = svg.querySelector("g");
+
+        // Clear existing content
+        g.innerHTML = "";
+
+        // Filter data to ±12 hours from center time
+        const filteredData = filterDataAroundTime(data, centerTime);
+        if (filteredData.length < 2) {
+          g.innerHTML =
+            '<text x="450" y="-200" text-anchor="middle">Insufficient data for selected time range</text>';
+          return;
+        }
+
+        const pathData = createPath(filteredData, centerTime);
+        if (!pathData) return;
+
+        const { path, xScale, yScale, valueExtent, timeExtent } = pathData;
+        const { timeTicks, valueTicks } = createAxisTicks(
+          timeExtent,
+          valueExtent,
+          xScale,
+          yScale,
+        );
+
+        // Draw axes
+        g.innerHTML += `
+                <path d="M 0,0 H 900" stroke="black" />
+                <path d="M 0,-400 V 0" stroke="black" />
+            `;
+
+        // Draw time ticks
+        timeTicks.forEach((tick) => {
+          g.innerHTML += `
+                    <path d="M ${tick.x},0 V 5" stroke="black" />
+                    <text x="${tick.x}" y="20" text-anchor="middle" font-size="12">${tick.label}</text>
+                `;
+        });
+
+        // Draw value ticks
+        valueTicks.forEach((tick) => {
+          g.innerHTML += `
+                    <path d="M -5,${-tick.y} H 0" stroke="black" />
+                    <text x="-10" y="${-tick.y + 5}" text-anchor="end" font-size="12">${tick.label}</text>
+                    <path d="M 0,${-tick.y} H 900" stroke="#eee" />
+                `;
+        });
+
+        // Draw tide curve
+        g.innerHTML += `
+                <path d="${path}" fill="none" stroke="blue" stroke-width="2" />
+            `;
+
+        // Draw current time marker
+        const currentX = xScale(centerTime);
+        const currentY = yScale(interpolateValue(filteredData, centerTime));
+
+        if (currentY !== null) {
+          g.innerHTML += `
+                    <path d="M ${currentX},-400 V 0" stroke="red" stroke-dasharray="4,4" />
+                    <circle cx="${currentX}" cy="${-currentY}" r="4" fill="red" />
+                `;
+        }
+      }
+
+      function interpolateValue(data, time) {
+        // Find the two data points that surround the current time
+        for (let i = 0; i < data.length - 1; i++) {
+          if (time >= data[i].time && time <= data[i + 1].time) {
+            const t = (time - data[i].time) / (data[i + 1].time - data[i].time);
+            return data[i].value + t * (data[i + 1].value - data[i].value);
+          }
+        }
+        return null;
+      }
+
+      async function initChart() {
+        try {
+          const data = await fetchTideData();
+          const now = new Date();
+          drawChart(data, now);
+        } catch (error) {
+          console.error("Error fetching or drawing tide data:", error);
+        }
+      }
+
+      // Initial draw
+      initChart();
+    </script>
+  </body>
+</html>
