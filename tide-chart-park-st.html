@@ -44,8 +44,17 @@
         const year = new Date().getUTCFullYear();
         const month = new Date().getUTCMonth() + 1;
         const day = new Date().getUTCDate();
-        const start = `${year}${String(month).padStart(2, "0")}${String(day - 1).padStart(2, "0")}`;
-        const end = `${year}${String(month).padStart(2, "0")}${String(day + 1).padStart(2, "0")}`;
+        // const start = `${year}${String(month).padStart(2, "0")}${String(day - 1).padStart(2, "0")}`;
+        // const end = `${year}${String(month).padStart(2, "0")}${String(day + 1).padStart(2, "0")}`;
+        const startDate = new Date(Date.UTC(year, month - 1, day - 1));
+        const endDate = new Date(Date.UTC(year, month - 1, day + 1));
+        const start = startDate.getUTCFullYear() +
+          String(startDate.getUTCMonth() + 1).padStart(2, "0") +
+          String(startDate.getUTCDate()).padStart(2, "0");
+        const end = endDate.getUTCFullYear() +
+          String(endDate.getUTCMonth() + 1).padStart(2, "0") +
+          String(endDate.getUTCDate()).padStart(2, "0");
+
         const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?begin_date=${start}&end_date=${end}&station=9414746&product=predictions&datum=MTL&time_zone=gmt&units=english&format=xml`;
         const response = await fetch(url);
         const text = await response.text();
