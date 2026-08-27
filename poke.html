@@ -1,0 +1,165 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>poke</title>
+<style>
+  html, body { height: 100%; margin: 0; display: grid; place-items: center;
+               font: 16px system-ui, sans-serif; }
+  form { display: flex; flex-direction: column; gap: .75em;
+         width: min(22em, calc(100vw - 2.5em)); }
+  input, button { font: inherit; padding: .8em 1em; border-radius: 10px;
+                  border: 1px solid #8884; width: 100%; box-sizing: border-box; }
+  button { cursor: pointer; white-space: nowrap; }
+  button:disabled { opacity: .6; cursor: default; }
+  dialog { border: none; border-radius: 14px; padding: 1.5em;
+           box-shadow: 0 10px 40px #0003; }
+  dialog::backdrop { background: #0006; backdrop-filter: blur(3px); }
+  #error { color: #c0392b; font-size: .9em; min-height: 1.2em; margin: 0; }
+  .link { border: none; background: none; width: auto; padding: 0;
+          font-size: .85em; opacity: .6; text-decoration: underline; }
+</style>
+
+<dialog id="unlock">
+  <form id="unlock-form">
+    <input id="key" placeholder="key" autocomplete="off" autocapitalize="off"
+           spellcheck="false" autofocus enterkeyhint="go">
+    <button id="unlock-btn">unlock</button>
+    <p id="error" role="alert"></p>
+  </form>
+</dialog>
+
+<form id="poke-form" hidden>
+  <input id="msg" placeholder="poke" autocomplete="off" maxlength="1000">
+  <button id="send">poke</button>
+  <button id="forget" type="button" class="link">forget key</button>
+</form>
+
+<script>
+  const ENCRYPTED_URL = {
+    salt: 'aOOpwRhzwvl8qOUhSQSt/Q==',
+    iv: 'JJGJm1oplNluIgZY',
+    ct: '0XRQ9I1BR6n5j2XlqFIFODXuHS3gwg8JnyPvJWcIL/8a+4LM5X5jRo2APGE6b/R/2g==',
+    iterations: 250000,
+  };
+
+  const unlock = document.getElementById('unlock');
+  const unlockForm = document.getElementById('unlock-form');
+  const unlockBtn = document.getElementById('unlock-btn');
+  const keyInput = document.getElementById('key');
+  const errorEl = document.getElementById('error');
+  const pokeForm = document.getElementById('poke-form');
+  const input = document.getElementById('msg');
+  const btn = document.getElementById('send');
+  const forgetBtn = document.getElementById('forget');
+
+  let ntfyURL = null;
+
+  const b64ToBytes = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
+  async function decryptURL(passphrase) {
+    const enc = new TextEncoder();
+    const base = await crypto.subtle.importKey(
+      'raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
+    const key = await crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt: b64ToBytes(ENCRYPTED_URL.salt),
+        iterations: ENCRYPTED_URL.iterations, hash: 'SHA-256' },
+      base,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['decrypt'],
+    );
+    // Throws on a wrong passphrase -- the auth tag is the check.
+    const plain = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: b64ToBytes(ENCRYPTED_URL.iv) }, key,
+      b64ToBytes(ENCRYPTED_URL.ct));
+    return new TextDecoder().decode(plain);
+  }
+
+  const STORAGE_KEY = 'poke:passphrase';
+
+  // Storage throws outright in some privacy modes; a missing key is not fatal.
+  const storage = {
+    get() { try { return localStorage.getItem(STORAGE_KEY); } catch { return null; } },
+    set(v) { try { localStorage.setItem(STORAGE_KEY, v); } catch {} },
+    clear() { try { localStorage.removeItem(STORAGE_KEY); } catch {} },
+  };
+
+  function reveal() {
+    unlock.close();
+    pokeForm.hidden = false;
+    input.focus();
+  }
+
+  forgetBtn.addEventListener('click', () => {
+    storage.clear();
+    location.reload();
+  });
+
+  unlockForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    errorEl.textContent = '';
+    unlockBtn.disabled = true;
+    unlockBtn.textContent = 'unlocking...';
+    try {
+      ntfyURL = await decryptURL(keyInput.value);
+      storage.set(keyInput.value);
+      reveal();
+    } catch {
+      errorEl.textContent = 'wrong key';
+      keyInput.select();
+    } finally {
+      unlockBtn.disabled = false;
+      unlockBtn.textContent = 'unlock';
+    }
+  });
+
+  // ntfy caps a message at 4096 bytes; count UTF-8, not UTF-16 units.
+  const clampBytes = (s, max) => {
+    const enc = new TextEncoder();
+    if (enc.encode(s).length <= max) return s;
+    let out = '';
+    let n = 0;
+    for (const ch of s) {              // iterate by code point, never split a surrogate pair
+      const size = enc.encode(ch).length;
+      if (n + size > max) break;
+      out += ch;
+      n += size;
+    }
+    return out;
+  };
+
+  pokeForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!ntfyURL) return;
+    // Collapse control chars (incl. CR/LF) to spaces so the body stays one clean
+    // line, then fall back to "poke" when nothing meaningful is left.
+    const cleaned = input.value.replace(/[\u0000-\u001F\u007F]/g, ' ').trim();
+    const body = clampBytes(cleaned || 'poke', 4096);
+
+    btn.disabled = true;
+    try {
+      const res = await fetch(ntfyURL, { method: 'POST', body });
+      btn.textContent = res.ok ? 'sent' : 'failed: ' + res.status;
+    } catch (e) {
+      btn.textContent = 'failed';
+    }
+    setTimeout(() => { btn.textContent = 'poke'; btn.disabled = false; }, 1200);
+  });
+
+  // Modal is not dismissable: no close button, and Esc is swallowed.
+  unlock.addEventListener('cancel', (e) => e.preventDefault());
+
+  (async () => {
+    const saved = storage.get();
+    if (saved) {
+      try {
+        ntfyURL = await decryptURL(saved);
+        reveal();
+        return;
+      } catch {
+        storage.clear();   // stale key: blob was rotated, or storage was tampered with
+      }
+    }
+    unlock.showModal();
+  })();
+</script>
