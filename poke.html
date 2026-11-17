@@ -14,7 +14,14 @@
   dialog { border: none; border-radius: 14px; padding: 1.5em;
            box-shadow: 0 10px 40px #0003; }
   dialog::backdrop { background: #0006; backdrop-filter: blur(3px); }
-  #error { color: #c0392b; font-size: .9em; min-height: 1.2em; margin: 0; }
+  #error, .error { color: #c0392b; font-size: .9em; min-height: 1.2em; margin: 0; }
+  .row { display: flex; gap: .5em; }
+  .row > button { flex: 1; }
+  /* Same padding on all sides plus an icon exactly one line tall makes this
+     square with the same height as the text buttons beside it. */
+  button { line-height: 1.25; }
+  .row > .icon { flex: none; width: auto; padding: .8em; }
+  .icon svg { display: block; width: 1.25em; height: 1.25em; }
   .link { border: none; background: none; width: auto; padding: 0;
           font-size: .85em; opacity: .6; text-decoration: underline; }
 </style>
@@ -30,11 +37,45 @@
 
 <form id="poke-form" hidden>
   <input id="msg" placeholder="poke" autocomplete="off" maxlength="1000">
-  <button id="send">poke</button>
+  <div class="row">
+    <button id="send">poke</button>
+    <button id="later" type="button" class="icon" aria-label="send later"
+            title="send later">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round"
+           stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+    </button>
+  </div>
   <button id="forget" type="button" class="link">forget key</button>
 </form>
 
+<dialog id="schedule">
+  <form id="schedule-form">
+    <button id="schedule-cancel" type="button">cancel</button>
+    <button id="schedule-default" type="button"></button>
+    <button id="schedule-btn">send at:</button>
+    <input id="when" type="datetime-local" required>
+    <p id="schedule-error" class="error" role="alert"></p>
+  </form>
+</dialog>
+
 <script>
+  // The ntfy URL is not in this file in the clear: the page is public, and a
+  // bare topic URL is a publish credential for anyone who views source.
+  //
+  // Below is AES-256-GCM ciphertext under a PBKDF2-SHA-256 key (250k iterations,
+  // random per-blob salt and IV). Regenerate with:
+  //
+  //     node tools/encrypt-url.mjs 'https://ntfy.sh/my-topic' 'Passphrase'
+  //
+  // and paste the printed object over this constant. There is no separate
+  // password check: GCM's auth tag fails on a wrong key, so a successful
+  // decrypt *is* the verification.
+  //
+  // This is obfuscation behind a shared passphrase, not real access control.
+  // The blob is public and therefore attackable offline, and anyone who learns
+  // the passphrase has the URL permanently. If it leaks, rotate the ntfy topic
+  // itself -- changing only the passphrase re-encrypts a URL others already hold.
   const ENCRYPTED_URL = {
     salt: 'aOOpwRhzwvl8qOUhSQSt/Q==',
     iv: 'JJGJm1oplNluIgZY',
@@ -51,8 +92,16 @@
   const input = document.getElementById('msg');
   const btn = document.getElementById('send');
   const forgetBtn = document.getElementById('forget');
+  const laterBtn = document.getElementById('later');
+  const schedule = document.getElementById('schedule');
+  const scheduleForm = document.getElementById('schedule-form');
+  const scheduleBtn = document.getElementById('schedule-btn');
+  const scheduleDefault = document.getElementById('schedule-default');
+  const scheduleCancel = document.getElementById('schedule-cancel');
+  const whenInput = document.getElementById('when');
+  const scheduleError = document.getElementById('schedule-error');
 
-  let ntfyURL = null;
+  let ntfyURL = null;   // set once unlocked; kept in memory only
 
   const b64ToBytes = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
@@ -75,6 +124,12 @@
     return new TextDecoder().decode(plain);
   }
 
+  // Remembering the passphrase (not the decrypted URL) keeps one useful property:
+  // the stored value is only worth anything against *this* blob, so rotating the
+  // topic or passphrase silently invalidates it and re-prompts. Note this origin
+  // is shared with other pages -- localStorage is per-origin, so any script you
+  // serve from this domain can read the key back out. Namespaced to avoid
+  // colliding with whatever else lives here.
   const STORAGE_KEY = 'poke:passphrase';
 
   // Storage throws outright in some privacy modes; a missing key is not fatal.
@@ -128,22 +183,116 @@
     return out;
   };
 
+  // Collapse control chars (incl. CR/LF) to spaces so the body stays one clean
+  // line, then fall back to "poke" when nothing meaningful is left.
+  const messageBody = () => {
+    const cleaned = input.value.replace(/[\u0000-\u001F\u007F]/g, ' ').trim();
+    return clampBytes(cleaned || 'poke', 4096);
+  };
+
+  // Show a status on the poke button briefly, then reset it.
+  const flash = (text) => {
+    btn.disabled = true;
+    btn.textContent = text;
+    setTimeout(() => { btn.textContent = 'poke'; btn.disabled = false; }, 1200);
+  };
+
   pokeForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!ntfyURL) return;
-    // Collapse control chars (incl. CR/LF) to spaces so the body stays one clean
-    // line, then fall back to "poke" when nothing meaningful is left.
-    const cleaned = input.value.replace(/[\u0000-\u001F\u007F]/g, ' ').trim();
-    const body = clampBytes(cleaned || 'poke', 4096);
-
     btn.disabled = true;
     try {
-      const res = await fetch(ntfyURL, { method: 'POST', body });
-      btn.textContent = res.ok ? 'sent' : 'failed: ' + res.status;
+      const res = await fetch(ntfyURL, { method: 'POST', body: messageBody() });
+      flash(res.ok ? 'sent' : 'failed: ' + res.status);
     } catch (e) {
-      btn.textContent = 'failed';
+      flash('failed');
     }
-    setTimeout(() => { btn.textContent = 'poke'; btn.disabled = false; }, 1200);
+  });
+
+  // Scheduled delivery (https://docs.ntfy.sh/publish/#scheduled-delivery): ntfy
+  // takes a unix timestamp, between 10 seconds and 3 days out. Passed as the `at`
+  // query param rather than a header so the POST stays a CORS simple request.
+  const MIN_DELAY_MS = 10 * 1000;
+  const MAX_DELAY_MS = 3 * 24 * 60 * 60 * 1000;
+
+  // datetime-local wants local wall-clock time as YYYY-MM-DDTHH:MM.
+  const toLocalInput = (d) => {
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` +
+           `T${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+
+  // Between 9:30pm and 9:30am, default to the next 9:30am; otherwise to 9:30pm.
+  const defaultTime = (now) => {
+    const at = (h) => {
+      const d = new Date(now);
+      d.setHours(h, 30, 0, 0);
+      return d;
+    };
+    const morning = at(9);
+    const evening = at(21);
+    if (now < morning) return morning;
+    if (now < evening) return evening;
+    morning.setDate(morning.getDate() + 1);
+    return morning;
+  };
+
+  const CUSTOM_OFFSET_MS = 10 * 60 * 1000;
+  let defaultWhen = null;   // fixed when the dialog opens
+
+  laterBtn.addEventListener('click', () => {
+    const now = new Date();
+    defaultWhen = defaultTime(now);
+    scheduleDefault.textContent =
+      'send at 9:30' + (defaultWhen.getHours() < 12 ? 'am' : 'pm');
+    whenInput.value = toLocalInput(new Date(now.getTime() + CUSTOM_OFFSET_MS));
+    whenInput.min = toLocalInput(now);
+    whenInput.max = toLocalInput(new Date(now.getTime() + MAX_DELAY_MS));
+    scheduleError.textContent = '';
+    schedule.showModal();
+  });
+
+  scheduleCancel.addEventListener('click', () => schedule.close());
+  // Esc would otherwise close the dialog mid-request, same as cancel.
+  schedule.addEventListener('cancel', (e) => {
+    if (scheduleCancel.disabled) e.preventDefault();
+  });
+
+  async function sendAt(when, button) {
+    if (!ntfyURL) return;
+    scheduleError.textContent = '';
+    const delay = when.getTime() - Date.now();
+    if (isNaN(delay)) { scheduleError.textContent = 'pick a time'; return; }
+    if (delay < MIN_DELAY_MS) { scheduleError.textContent = 'that is in the past'; return; }
+    if (delay > MAX_DELAY_MS) { scheduleError.textContent = 'at most 3 days out'; return; }
+
+    const label = button.textContent;
+    scheduleCancel.disabled = scheduleDefault.disabled = scheduleBtn.disabled = true;
+    button.textContent = 'scheduling...';
+    try {
+      const url = new URL(ntfyURL);
+      url.searchParams.set('at', String(Math.floor(when.getTime() / 1000)));
+      const res = await fetch(url, { method: 'POST', body: messageBody() });
+      if (res.ok) {
+        schedule.close();
+        flash('scheduled');
+      } else {
+        scheduleError.textContent = 'failed: ' + res.status;
+      }
+    } catch {
+      scheduleError.textContent = 'failed';
+    } finally {
+      scheduleCancel.disabled = scheduleDefault.disabled = scheduleBtn.disabled = false;
+      button.textContent = label;
+    }
+  }
+
+  scheduleDefault.addEventListener('click', () => sendAt(defaultWhen, scheduleDefault));
+
+  scheduleForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    // No zone suffix, so this parses as local time.
+    sendAt(new Date(whenInput.value), scheduleBtn);
   });
 
   // Modal is not dismissable: no close button, and Esc is swallowed.
